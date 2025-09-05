@@ -1,0 +1,30 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "name": "FichajeTray (módulo)",
+        "type": "python",
+        "request": "launch",
+        "module": "src.main",
+        "console": "integratedTerminal",
+        "justMyCode": false,
+        "env": {
+          "PYTHONPATH": "${workspaceFolder}"
+        },
+        "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe"
+      },
+      {
+        "name": "Microsoft cloud sandbox",
+        "request": "launch",
+        "type": "al",
+        "environmentType": "Sandbox",
+        "environmentName": "sandbox",
+        "startupObjectId": 22,
+        "startupObjectType": "Page",
+        "breakOnError": "All",
+        "launchBrowser": true,
+        "enableLongRunningSqlStatements": true,
+        "enableSqlInformationDebugger": true
+      }
+    ]
+  }
