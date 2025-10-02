@@ -179,6 +179,30 @@ class TrayApp:
         except Exception as exc:
             self._notify(f"No se pudo abrir el diálogo: {exc}")
 
+    def action_toggle_turno_continuo(self, icon: pystray.Icon, item: pystray.MenuItem) -> None:  # noqa: ARG002
+        enabled = not bool(self.config.get("auto_turno_continuo", False))
+        self.config["auto_turno_continuo"] = enabled
+        if enabled:
+            # Exclusividad: apaga solo_mediodia
+            self.config["auto_solo_mediodia"] = False
+        save_config(self.config)
+        if enabled:
+            self._notify("Turno continuo activado (mediodía ignorado)")
+        else:
+            self._notify("Turno continuo desactivado")
+
+    def action_toggle_solo_mediodia(self, icon: pystray.Icon, item: pystray.MenuItem) -> None:  # noqa: ARG002
+        enabled = not bool(self.config.get("auto_solo_mediodia", False))
+        self.config["auto_solo_mediodia"] = enabled
+        if enabled:
+            # Exclusividad: apaga turno continuo
+            self.config["auto_turno_continuo"] = False
+        save_config(self.config)
+        if enabled:
+            self._notify("Modo solo mediodía activado")
+        else:
+            self._notify("Modo solo mediodía desactivado")
+
     def action_set_hours(self, icon: pystray.Icon, item: pystray.MenuItem) -> None:  # noqa: ARG002
         # Abrir diálogo de configuración de horas
         import subprocess
@@ -192,9 +216,38 @@ class TrayApp:
                 subprocess.run([sys.executable, "-m", "src.main", "--hours-dialog"], check=False)
             # Recargar config tras cerrar el diálogo
             self.config = load_config()
-            entrada = self.config.get("auto_entrada_hora", "08:00")
+            entrada = self.config.get("auto_entrada_hora", "08:30")
             salida = self.config.get("auto_salida_hora", "16:30")
-            self._notify(f"Horas configuradas: Entrada {entrada}, Salida {salida}")
+            medio_salida = self.config.get("auto_mediodia_salida", "14:00")
+            medio_entrada = self.config.get("auto_mediodia_entrada", "14:45")
+            turno_continuo = bool(self.config.get("auto_turno_continuo", False))
+            solo_mediodia = bool(self.config.get("auto_solo_mediodia", False))
+            # Datos de viernes
+            viernes_enabled = bool(self.config.get("auto_viernes_enabled", True))
+            v_entrada = self.config.get("auto_viernes_entrada_hora", "08:30")
+            v_salida = self.config.get("auto_viernes_salida_hora", "14:30")
+            v_turno = bool(self.config.get("auto_viernes_turno_continuo", True))
+            if turno_continuo:
+                self._notify(
+                    (
+                        f"Horas configuradas: Entrada {entrada}, Salida {salida} | Turno continuo ACTIVADO (mediodía ignorado)"
+                        + (f" | Viernes: {'ON' if viernes_enabled else 'OFF'} ({v_entrada}-{v_salida}{', turno continuo' if v_turno else ''})" )
+                    )
+                )
+            elif solo_mediodia:
+                self._notify(
+                    (
+                        f"Horas configuradas: Solo mediodía ACTIVADO | Mediodía: salida {medio_salida}, entrada {medio_entrada}"
+                        + (f" | Viernes: {'ON' if viernes_enabled else 'OFF'} ({v_entrada}-{v_salida}{', turno continuo' if v_turno else ''})" )
+                    )
+                )
+            else:
+                self._notify(
+                    (
+                        f"Horas configuradas: Entrada {entrada}, Salida {salida} | Mediodía: salida {medio_salida}, entrada {medio_entrada}"
+                        + (f" | Viernes: {'ON' if viernes_enabled else 'OFF'} ({v_entrada}-{v_salida}{', turno continuo' if v_turno else ''})" )
+                    )
+                )
         except Exception as exc:
             self._notify(f"No se pudo abrir el diálogo: {exc}")
 
@@ -295,37 +348,82 @@ class TrayApp:
         current_time = now.time()
         
         # Obtener horas configuradas
-        entrada_str = self.config.get("auto_entrada_hora", "08:00")
+        entrada_str = self.config.get("auto_entrada_hora", "08:30")
         salida_str = self.config.get("auto_salida_hora", "16:30")
+        medio_salida_str = self.config.get("auto_mediodia_salida", "14:00")
+        medio_entrada_str = self.config.get("auto_mediodia_entrada", "14:45")
+        turno_continuo = bool(self.config.get("auto_turno_continuo", False))
+        solo_mediodia = bool(self.config.get("auto_solo_mediodia", False))
+        # Reglas especiales de viernes (por defecto activadas)
+        try:
+            is_friday = now.weekday() == 4  # 0=lunes .. 4=viernes
+        except Exception:
+            is_friday = False
+        if is_friday and bool(self.config.get("auto_viernes_enabled", True)):
+            # Si hay horario especial de viernes, aplicar
+            entrada_str = self.config.get("auto_viernes_entrada_hora", entrada_str)
+            salida_str = self.config.get("auto_viernes_salida_hora", salida_str)
+            # Permitir marcar viernes como turno continuo aunque globalmente no lo sea
+            if bool(self.config.get("auto_viernes_turno_continuo", True)):
+                turno_continuo = True
         
         try:
             entrada_time = datetime.strptime(entrada_str, "%H:%M").time()
+        except ValueError:
+            entrada_time = time(8, 30)
+        try:
             salida_time = datetime.strptime(salida_str, "%H:%M").time()
         except ValueError:
-            # Si las horas no son válidas, usar valores por defecto
-            entrada_time = time(8, 0)
             salida_time = time(16, 30)
+        try:
+            medio_salida_time = datetime.strptime(medio_salida_str, "%H:%M").time()
+        except ValueError:
+            medio_salida_time = time(14, 0)
+        try:
+            medio_entrada_time = datetime.strptime(medio_entrada_str, "%H:%M").time()
+        except ValueError:
+            medio_entrada_time = time(14, 45)
         
         # Definir ventanas de tiempo (configurable)
         ventana_minutos = int(self.config.get("auto_ventana_minutos", 2) or 2)
+        ventana_minutos_entrada_extra = int(self.config.get("auto_ventana_minutos_entrada", 0) or 0)
         
         # Crear objetos datetime para poder hacer cálculos
         entrada_dt = datetime.combine(now.date(), entrada_time)
         salida_dt = datetime.combine(now.date(), salida_time)
+        medio_salida_dt = datetime.combine(now.date(), medio_salida_time)
+        medio_entrada_dt = datetime.combine(now.date(), medio_entrada_time)
         
-        # Ventana de entrada: desde 2 minutos antes hasta la hora exacta
+        # Ventana de entrada: desde X minutos antes hasta la hora exacta (+extra configurable)
         ventana_entrada_inicio = entrada_dt - timedelta(minutes=ventana_minutos)
-        ventana_entrada_fin = entrada_dt
-        
-        # Ventana de salida: desde la hora exacta hasta 2 minutos después
+        ventana_entrada_fin = entrada_dt + timedelta(minutes=ventana_minutos_entrada_extra)
+        # Ventana de salida: desde la hora exacta hasta X minutos después
         ventana_salida_inicio = salida_dt
         ventana_salida_fin = salida_dt + timedelta(minutes=ventana_minutos)
+        # Ventana de salida mediodía: desde la hora exacta hasta X minutos después
+        ventana_medio_salida_inicio = medio_salida_dt
+        ventana_medio_salida_fin = medio_salida_dt + timedelta(minutes=ventana_minutos)
+        # Ventana de entrada mediodía: desde X minutos antes hasta la hora exacta
+        ventana_medio_entrada_inicio = medio_entrada_dt - timedelta(minutes=ventana_minutos)
+        ventana_medio_entrada_fin = medio_entrada_dt+ timedelta(minutes=ventana_minutos_entrada_extra)
         
         # Comprobar si estamos en alguna ventana válida
         en_ventana_entrada = ventana_entrada_inicio.time() <= current_time <= ventana_entrada_fin.time()
         en_ventana_salida = ventana_salida_inicio.time() <= current_time <= ventana_salida_fin.time()
+        en_ventana_medio_entrada = ventana_medio_entrada_inicio.time() <= current_time <= ventana_medio_entrada_fin.time()
+        en_ventana_medio_salida = ventana_medio_salida_inicio.time() <= current_time <= ventana_medio_salida_fin.time()
+
+        if turno_continuo:
+            en_ventana_entrada_total = en_ventana_entrada
+            en_ventana_salida_total = en_ventana_salida
+        elif solo_mediodia:
+            en_ventana_entrada_total = en_ventana_medio_entrada
+            en_ventana_salida_total = en_ventana_medio_salida
+        else:
+            en_ventana_entrada_total = en_ventana_entrada or en_ventana_medio_entrada
+            en_ventana_salida_total = en_ventana_salida or en_ventana_medio_salida
         
-        if not (en_ventana_entrada or en_ventana_salida):
+        if not (en_ventana_entrada_total or en_ventana_salida_total):
             # No estamos en ninguna ventana de fichaje automático
             return
         
@@ -334,7 +432,7 @@ class TrayApp:
         check_activity = bool(self.config.get("auto_check_activity", True))
         if check_activity:
             try:
-                if (not is_system_active(idle_threshold)) and (en_ventana_entrada):
+                if (not is_system_active(idle_threshold)) and (en_ventana_entrada_total):
                     self._notify("Equipo inactivo: no se intenta fichaje automático")
                     return
             except Exception:
@@ -343,7 +441,7 @@ class TrayApp:
         
         try:
             # Usar flujo automático (que ya tiene su propia lógica de validación)
-            if en_ventana_entrada:
+            if en_ventana_entrada_total:
                 res = flujo_automatico(self.api, code, "ENTRADA")
             else:
                 res = flujo_automatico(self.api, code, "SALIDA")
@@ -382,6 +480,14 @@ class TrayApp:
             pystray.MenuItem(
                 lambda item: "Desactivar automático" if self.config.get("auto_enabled") else "Activar automático",
                 self.action_toggle_auto,
+            ),
+            pystray.MenuItem(
+                lambda item: "Desactivar turno continuo" if self.config.get("auto_turno_continuo") else "Activar turno continuo",
+                self.action_toggle_turno_continuo,
+            ),
+            pystray.MenuItem(
+                lambda item: "Desactivar solo mediodía" if self.config.get("auto_solo_mediodia") else "Activar solo mediodía",
+                self.action_toggle_solo_mediodia,
             ),
             pystray.MenuItem("Buscar actualización", lambda i, it: threading.Thread(target=self._check_and_run_installer, daemon=True).start()),
             pystray.MenuItem(
