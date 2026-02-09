@@ -35,6 +35,13 @@ class ApiClient:
         except Exception as exc:
             raise ApiError(f"Error de red al registrar fichaje: {exc}") from exc
         if resp.status_code >= 400:
+            # Si la respuesta es un JSON con 'error' y 'ultimo_fichaje', devolverlo en lugar de lanzar excepción
+            try:
+                error_data = resp.json()
+                if isinstance(error_data, dict) and "error" in error_data and "ultimo_fichaje" in error_data:
+                    return error_data
+            except Exception:
+                pass
             raise ApiError(f"Error HTTP {resp.status_code} al registrar fichaje: {resp.text}")
         try:
             return resp.json()

@@ -87,7 +87,7 @@ def flujo_manual(api: ApiClient, employee_code: str, tipo: TipoFichaje) -> Dict[
     info = parse_proximo_fichaje(api.get_proximo_fichaje(employee_code))
     tipo=validar_manual(tipo, info)
     res = realizar_fichaje(api, employee_code, tipo)
-    if not isinstance(res, dict) or (res.get("message") is None and res.get("fichaje") is None):
+    if not isinstance(res, dict) or (res.get("message") is None and res.get("fichaje") is None and res.get("error") is None):
         raise ApiError("Respuesta inesperada del servidor de fichajes")
     return res
 
